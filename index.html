@@ -292,6 +292,24 @@
       font-size: 0.78rem;
     }
 
+    .personal-best {
+      margin: 0.85rem 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 750;
+    }
+
+    .personal-best strong {
+      color: var(--brand);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .personal-best-status {
+      margin: 0.3rem 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
     .orbit-art {
       position: relative;
       display: grid;
@@ -629,6 +647,15 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .results-card .personal-best {
+      margin-top: 0.8rem;
+    }
+
+    .results-card .personal-best-status {
+      max-width: 42ch;
+      margin: 0.3rem auto 0.8rem;
+    }
+
     .result-message {
       max-width: 42ch;
       margin: 0 auto 1.7rem;
@@ -762,6 +789,8 @@
           <button id="startButton" class="primary-button" type="button">
             Launch mission <span aria-hidden="true">→</span>
           </button>
+          <p class="personal-best">Personal best: <strong id="introBestScore">No completed quizzes yet.</strong></p>
+          <p id="introBestStatus" class="personal-best-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           <p class="keyboard-hint">Tip: use the arrow keys to choose, then Tab to Check answer and press Enter.</p>
         </div>
         <div class="orbit-art" aria-hidden="true">
@@ -807,6 +836,8 @@
         <p class="eyebrow">Mission complete</p>
         <h1 id="resultsTitle" tabindex="-1">The universe is yours to explore.</h1>
         <p id="finalScore" class="final-score"></p>
+        <p class="personal-best">Personal best: <strong id="resultsBestScore">No completed quizzes yet.</strong></p>
+        <p id="resultsBestStatus" class="personal-best-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
         <p id="resultMessage" class="result-message"></p>
         <button id="replayButton" class="primary-button" type="button">
           Fly again <span aria-hidden="true">↻</span>
@@ -915,16 +946,87 @@
     const resultEmoji = document.getElementById("resultEmoji");
     const finalScore = document.getElementById("finalScore");
     const resultMessage = document.getElementById("resultMessage");
+    const introBestScore = document.getElementById("introBestScore");
+    const introBestStatus = document.getElementById("introBestStatus");
+    const resultsBestScore = document.getElementById("resultsBestScore");
+    const resultsBestStatus = document.getElementById("resultsBestStatus");
 
     let questionIndex = 0;
     let score = 0;
     let hasAnswered = false;
+    let personalBest = null;
+    let personalBestCanBeCompared = true;
+    let personalBestIsPersisted = false;
+    let personalBestStatusMessage = "";
+    const personalBestStorageKey = "orbit-academy-personal-best-score";
 
     function showScreen(activeScreen) {
       [introScreen, quizScreen, resultsScreen].forEach((screen) => {
         screen.hidden = screen !== activeScreen;
       });
     }
+
+    function loadPersonalBest() {
+      try {
+        const storedScore = window.localStorage.getItem(personalBestStorageKey);
+        if (storedScore === null) {
+          return { score: null, canBeCompared: true, isPersisted: false, message: "" };
+        }
+
+        const parsedScore = Number(storedScore);
+        if (!/^(0|[1-9]\d*)$/.test(storedScore) || !Number.isInteger(parsedScore) || parsedScore > questions.length) {
+          return {
+            score: null,
+            canBeCompared: true,
+            isPersisted: false,
+            message: "Saved personal-best data could not be read."
+          };
+        }
+
+        return { score: parsedScore, canBeCompared: true, isPersisted: true, message: "" };
+      } catch {
+        return {
+          score: null,
+          canBeCompared: false,
+          isPersisted: false,
+          message: "Personal best storage is unavailable, so a saved score could not be loaded."
+        };
+      }
+    }
+
+    function savePersonalBest(bestScore) {
+      try {
+        window.localStorage.setItem(personalBestStorageKey, String(bestScore));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function renderPersonalBest() {
+      let scoreText;
+      if (!personalBestCanBeCompared) {
+        scoreText = "Unavailable";
+      } else if (personalBest === null) {
+        scoreText = personalBestStatusMessage ? "No valid saved score." : "No completed quizzes yet.";
+      } else {
+        scoreText = `${personalBest} / ${questions.length}${personalBestIsPersisted ? "" : " (this session)"}`;
+      }
+
+      introBestScore.textContent = scoreText;
+      resultsBestScore.textContent = scoreText;
+      introBestStatus.textContent = personalBestStatusMessage;
+      introBestStatus.hidden = personalBestStatusMessage === "";
+      resultsBestStatus.textContent = personalBestStatusMessage;
+      resultsBestStatus.hidden = personalBestStatusMessage === "";
+    }
+
+    const storedPersonalBest = loadPersonalBest();
+    personalBest = storedPersonalBest.score;
+    personalBestCanBeCompared = storedPersonalBest.canBeCompared;
+    personalBestIsPersisted = storedPersonalBest.isPersisted;
+    personalBestStatusMessage = storedPersonalBest.message;
+    renderPersonalBest();
 
     function updateProgress(completed) {
       progress.value = completed;
@@ -1005,6 +1107,22 @@
       scoreAnimationFrame = window.requestAnimationFrame(updateScore);
     }
 
+    function updatePersonalBest() {
+      if (!personalBestCanBeCompared || (personalBest !== null && score <= personalBest)) {
+        return personalBestStatusMessage;
+      }
+
+      personalBest = score;
+      personalBestIsPersisted = savePersonalBest(score);
+      if (!personalBestIsPersisted) {
+        personalBestStatusMessage = "This personal best could not be saved for future visits and is available only for this session.";
+        return personalBestStatusMessage;
+      }
+
+      personalBestStatusMessage = "";
+      return `New personal best: ${score} out of ${questions.length}.`;
+    }
+
     function showResults() {
       const reaction = score >= 9
         ? { emoji: "🏆", label: "Trophy reaction", message: "Galactic genius! The stars are cheering for you." }
@@ -1017,8 +1135,16 @@
       resultEmoji.textContent = reaction.emoji;
       resultEmoji.setAttribute("aria-label", reaction.label);
       animateFinalScore(score);
+      const personalBestAnnouncement = updatePersonalBest();
+      renderPersonalBest();
       resultMessage.textContent = `You got ${score} ${score === 1 ? "answer" : "answers"} right. ${reaction.message}`;
+      resultsBestStatus.textContent = "";
+      resultsBestStatus.hidden = true;
       showScreen(resultsScreen);
+      if (personalBestAnnouncement) {
+        resultsBestStatus.hidden = false;
+        resultsBestStatus.textContent = personalBestAnnouncement;
+      }
       document.getElementById("resultsTitle").focus();
     }
 
